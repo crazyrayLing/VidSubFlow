@@ -1,4 +1,4 @@
-- ## 🎬 VideoSubFusion
+## 🎬 VideoSubFusion
 
   VideoSubFusion 是一个基于 **PyQt5** 的视频字幕处理工具，支持以下功能：
 
