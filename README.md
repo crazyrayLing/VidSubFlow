@@ -2,8 +2,8 @@
 
 **VideoSubFusion** 是一个基于 **PyQt5** 的视频字幕处理工具，支持以下功能：
 
-- 🎤 使用 **faster-whisper** 自动生成字幕  
-- 🌍 使用 **MarianMT (transformers)** 翻译字幕  
+- 🎤 使用 [**faster-whisper**](https://github.com/guillaumekln/faster-whisper) 自动生成字幕  
+- 🌍 使用 [**MarianMT (transformers)**](https://huggingface.co/docs/transformers/model_doc/marian) 翻译字幕  
 - 🎞️ 使用 **ffmpeg** 将字幕与视频融合  
 - ✂️ 支持字幕分割与管理  
 - 🖥️ 提供简洁易用的 **GUI 界面**  
