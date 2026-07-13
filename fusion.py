@@ -5,30 +5,49 @@ from split import split_srt  # 你的分割字幕模块
 
 os.environ["PATH"] += r";C:\ffmpeg\bin"  # ffmpeg路径，根据实际改
 
-def run_ffmpeg_with_progress(command, log_callback=None, progress_callback=None):
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+def run_ffmpeg_with_progress(command, log_callback=None, progress_callback=None, operation_name="处理"):
+    """
+    通用 FFmpeg 执行函数，支持进度回调
+    """
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     duration = None
+    last_percent = -1
+    
     for line in process.stderr:
         line = line.strip()
         if log_callback:
             log_callback(line)
+        
         # 获取视频总时长
         if duration is None:
             m = re.search(r'Duration: (\d+):(\d+):([\d\.]+)', line)
             if m:
                 h, m_, s = map(float, m.groups())
                 duration = h*3600 + m_*60 + s
+                if log_callback:
+                    log_callback(f"[{operation_name}] 视频总时长: {duration:.2f}秒")
+        
         # 获取当前时间
         m2 = re.search(r'time=(\d+):(\d+):([\d\.]+)', line)
-        if m2 and duration:
+        if m2 and duration and duration > 0:
             h, m_, s = map(float, m2.groups())
             current_time = h*3600 + m_*60 + s
             percent = int((current_time / duration) * 100)
-            if progress_callback:
-                progress_callback(percent)
+            
+            # 避免重复发送相同的进度
+            if percent != last_percent:
+                last_percent = percent
+                if progress_callback:
+                    progress_callback(percent)
+                if log_callback and percent % 10 == 0:
+                    log_callback(f"[{operation_name}] 进度: {percent}%")
+    
     process.wait()
+    
     if process.returncode != 0:
-        raise RuntimeError("FFmpeg 执行失败")
+        raise RuntimeError(f"FFmpeg 执行失败，返回码: {process.returncode}")
+    
+    return True
 
 def get_codec_and_ext(input_ext):
     input_ext = input_ext.lower()
@@ -46,7 +65,7 @@ def get_codec_and_ext(input_ext):
         return "libx264", ".mp4"
 
 def add_subtitles(input_video_file, srt_file, output_file, font_file=None,
-                  subtitle_color='white', font_size=24, margin_v=21,Italic=0,
+                  subtitle_color='white', font_size=24, margin_v=21, Italic=0,
                   log_callback=None, progress_callback=None):
     if font_file:
         subtitle_filter = f"subtitles={srt_file}:fontsdir={os.path.dirname(font_file)}:" \
@@ -75,15 +94,22 @@ def add_subtitles(input_video_file, srt_file, output_file, font_file=None,
     if log_callback:
         log_callback(f"正在添加字幕到视频: {os.path.basename(output_file)}")
     
-    run_ffmpeg_with_progress(command, log_callback=log_callback, progress_callback=progress_callback)
+    operation_name = f"添加字幕 ({os.path.basename(output_file)})"
+    run_ffmpeg_with_progress(
+        command, 
+        log_callback=log_callback, 
+        progress_callback=progress_callback,
+        operation_name=operation_name
+    )
 
     if log_callback:
         log_callback(f"字幕添加成功: {output_file}")
     return output_file
 
-
-
-def convert_to_mp4(input_video, log_callback=None):
+def convert_to_mp4(input_video, log_callback=None, progress_callback=None):
+    """
+    将视频转换为 MP4 格式，支持进度显示
+    """
     base_name = os.path.splitext(input_video)[0]
     output_video = base_name + ".mp4"
 
@@ -99,23 +125,38 @@ def convert_to_mp4(input_video, log_callback=None):
 
     if log_callback:
         log_callback(f"正在转换为 MP4: {os.path.basename(input_video)}")
+        log_callback(f"输出文件: {os.path.basename(output_video)}")
 
-    result = subprocess.run(command)
-
-    if result.returncode != 0:
-        raise Exception("视频转换失败")
-
-    # 删除原文件
-    os.remove(input_video)
-
-    if log_callback:
-        log_callback(f"原视频已删除: {os.path.basename(input_video)}")
-        log_callback(f"转换完成: {os.path.basename(output_video)}")
-
-    return output_video
-
+    try:
+        # 使用通用的进度显示函数
+        operation_name = f"转换 MP4 ({os.path.basename(input_video)})"
+        run_ffmpeg_with_progress(
+            command,
+            log_callback=log_callback,
+            progress_callback=progress_callback,
+            operation_name=operation_name
+        )
+        
+        # 转换成功后删除原文件
+        if os.path.exists(input_video):
+            os.remove(input_video)
+            if log_callback:
+                log_callback(f"原视频已删除: {os.path.basename(input_video)}")
+        
+        if log_callback:
+            log_callback(f"转换完成: {os.path.basename(output_video)}")
+        
+        return output_video
+        
+    except Exception as e:
+        if log_callback:
+            log_callback(f"转换失败: {str(e)}")
+        raise Exception(f"视频转换失败: {str(e)}")
 
 def process_video_with_subtitles(Vname, font_file=None, log_callback=None, progress_callback=None):
+    """
+    处理视频并添加字幕，支持进度显示
+    """
     video_dir = "video"
     exts = ['.mp4', '.mkv', '.webm', '.flv', '.avi']
 
@@ -123,7 +164,6 @@ def process_video_with_subtitles(Vname, font_file=None, log_callback=None, progr
 
     for ext in exts:
         candidate = os.path.join(video_dir, Vname + ext)
-
         if os.path.exists(candidate):
             input_video_file = candidate
             break
@@ -131,19 +171,39 @@ def process_video_with_subtitles(Vname, font_file=None, log_callback=None, progr
     if input_video_file is None:
         if log_callback:
             log_callback(f"未找到名为 {Vname} 的视频文件！")
-        return
+        return None
+
+    if log_callback:
+        log_callback(f"找到视频文件: {os.path.basename(input_video_file)}")
 
     # =========================
-    # 非 MP4 自动转换
+    # 非 MP4 自动转换（带进度）
     # =========================
     _, ext = os.path.splitext(input_video_file)
-
     if ext.lower() != ".mp4":
+        if log_callback:
+            log_callback("检测到非 MP4 格式，开始转换...")
+        
+        # 发送转换进度
+        if progress_callback:
+            progress_callback(0)
+        
         input_video_file = convert_to_mp4(
             input_video_file,
-            log_callback=log_callback
+            log_callback=log_callback,
+            progress_callback=progress_callback
         )
+        
+        if log_callback:
+            log_callback("视频转换完成")
+        
+        # 转换完成，进度到 100%
+        if progress_callback:
+            progress_callback(100)
 
+    # =========================
+    # 分割字幕文件
+    # =========================
     input_srt = f"outsrt/{Vname}_zh.srt"
     output_srt_en = f"outsrt/{Vname}_en.srt"
     output_srt_cn = f"outsrt/{Vname}_cn.srt"
@@ -151,14 +211,21 @@ def process_video_with_subtitles(Vname, font_file=None, log_callback=None, progr
     if log_callback:
         log_callback("开始分割字幕文件...")
 
-    split_srt(input_srt, output_srt_en, output_srt_cn)
-
-    if log_callback:
-        log_callback("字幕文件分割完成。")
+    try:
+        split_srt(input_srt, output_srt_en, output_srt_cn)
+        if log_callback:
+            log_callback("字幕文件分割完成。")
+    except Exception as e:
+        if log_callback:
+            log_callback(f"字幕分割失败: {str(e)}")
+        return None
 
     # =========================
-    # 中文字幕
+    # 添加中文字幕（带进度）
     # =========================
+    if progress_callback:
+        progress_callback(0)
+    
     srt_file_cn = output_srt_cn
     output_file_cn = os.path.join(video_dir, f"{Vname}_cn")
 
@@ -168,16 +235,19 @@ def process_video_with_subtitles(Vname, font_file=None, log_callback=None, progr
         output_file_cn,
         font_file,
         subtitle_color='&H00FFFFFF',
-        font_size=16,
-        margin_v=40,
+        font_size=14,
+        margin_v=22,
         Italic=0,
         log_callback=log_callback,
         progress_callback=progress_callback
     )
 
     # =========================
-    # 英文字幕
+    # 添加英文字幕（带进度）
     # =========================
+    if progress_callback:
+        progress_callback(0)
+    
     srt_file_en = output_srt_en
     output_file_en = os.path.join(video_dir, f"{Vname}_final")
 
@@ -188,7 +258,7 @@ def process_video_with_subtitles(Vname, font_file=None, log_callback=None, progr
         font_file,
         subtitle_color='&H00FFFF00',
         font_size=12,
-        margin_v=38,
+        margin_v=8,
         Italic=0,
         log_callback=log_callback,
         progress_callback=progress_callback
@@ -196,4 +266,39 @@ def process_video_with_subtitles(Vname, font_file=None, log_callback=None, progr
 
     if log_callback:
         log_callback(f"最终输出文件: {output_file_en}")
+    
+    # 进度完成
+    if progress_callback:
+        progress_callback(100)
+    
+    return output_file_en
 
+# ==============================
+# 使用示例（带 GUI 进度条）
+# ==============================
+if __name__ == "__main__":
+    # 定义回调函数示例
+    def log_callback(message):
+        print(f"[LOG] {message}")
+    
+    def progress_callback(percent):
+        # 可以在这里更新 GUI 进度条
+        print(f"[PROGRESS] {percent}%")
+        # 如果使用 PyQt/PySide:
+        # self.progress_bar.setValue(percent)
+        # QApplication.processEvents()
+    
+    # 处理视频
+    try:
+        result = process_video_with_subtitles(
+            "my_video",  # 视频文件名（不含扩展名）
+            font_file="C:/Windows/Fonts/simsun.ttc",  # 可选字体文件
+            log_callback=log_callback,
+            progress_callback=progress_callback
+        )
+        if result:
+            print(f"处理成功: {result}")
+        else:
+            print("处理失败")
+    except Exception as e:
+        print(f"错误: {e}")
